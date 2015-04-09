@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <!--[if lt IE 9]>
+        <script src="http://html5shim.googlecode.com/svn/trunk/html5.js"></script>
+        <![endif]-->
+
+        <meta charset="utf-8">
+    <style>
+      html, body, #map {
+        height: 99%;
+        margin: 0px;
+        padding: 0px
+      };
+    </style>
+
+        <title>EyeCandy</title>
+        <script type="text/javascript" src="http://maps.google.com/maps/api/js?sensor=false"></script>
+        <script type="text/javascript" src="http://plus.martinmatysiak.de/daynightoverlay/src/daynightoverlay.min.js"></script>
+        <script>
+
+// global vars
+// change for local config
+//var uid="admin:q1d3m0";
+var auth_token ="778d1a45-b1c8-41a0-8d4e-a14fd4ecd0c7" ;
+var qradarwait=new XMLHttpRequest();
+var home={"longitude":5.175,"latitude":52.155};
+var timetolive=120000; // miliseconds
+// global vars
+var qradar=new XMLHttpRequest();
+var qradarresult=new XMLHttpRequest();
+
+var telize=[];
+var tn=0;
+var IDQRadarTimer = null;
+var mainTimerA = null;
+var mainTimerB = null;
+
+var visibleObjects = {"lines":[]};
+
+// memberfilter for QRadar search output
+var memberfilterA = new Array();
+memberfilterA[0] = "sourceip";
+memberfilterA[1] = "destinationip";
+memberfilterA[2] = "protocol";
+memberfilterA[3] = "direction";
+
+// memberfilter for visibleObjects hash
+var memberfilterB = new Array();
+memberfilterB[0] = "hv";
+
+
+
+var MY_MAPTYPE_ID = 'custom_style';
+var mapObj;
+
+// end global vars
+
+
+
+function init() {
+console.log("starting");
+ var featureOpts = [
+    {stylers: [
+        { hue: '#000089' },
+        { visibility: 'simplified' },
+        { gamma: 0.5 },
+        { weight: 0.5 }
+      ]
+    },
+    {elementType: 'labels',
+      stylers: [
+        { visibility: 'on' }
+      ]
+    },
+    {featureType: 'water',
+      stylers: [
+        { color: '#000099' }
+      ]
+    }
+  ];
+
+  var mapOptions = {
+    zoom: 3,
+	minZoom: 3,
+    center: new google.maps.LatLng(25,0),
+    mapTypeControlOptions: {
+      mapTypeIds: [google.maps.MapTypeId.ROADMAP, MY_MAPTYPE_ID]
+    },
+    mapTypeId: MY_MAPTYPE_ID
+  };
+	mapObj = new google.maps.Map(document.getElementById('map'),mapOptions);        
+	var styledMapOptions = {name: 'Custom Style'};
+	var customMapType = new google.maps.StyledMapType(featureOpts, styledMapOptions);
+	mapObj.mapTypes.set(MY_MAPTYPE_ID, customMapType);
+	new DayNightOverlay({map: mapObj});
+};
+
+function drawPath() {
+console.log("drawPath: "+visibleObjects.lines.length);
+for(var i = 0; i < visibleObjects.lines.length; i++) {
+//for(var i = 0; i < 4; i++) {
+if ((visibleObjects.lines[i].ttl+timetolive)<(new Date).getTime()) {
+
+		visibleObjects.lines[i].gmPath.setMap(null);
+		visibleObjects.lines[i].gmPath.setVisible(false);
+//		var removed = visibleObjects.lines.splice(i,1);
+		console.log("TTL expired "+i+"/"+removed);
+	} else {
+		visibleObjects.lines[i].gmPath.setMap(mapObj);
+		visibleObjects.lines[i].gmPath.setVisible(true);
+	};
+  };
+};
+
+
+function undrawPath() {
+console.log("undrawPath: "+visibleObjects.lines.length);
+for(var i = 0; i < visibleObjects.lines.length; i++) {
+if ((visibleObjects.lines[i].ttl+timetolive)<(new Date).getTime()) {
+	console.log("TTL expired: "+i);
+	visibleObjects.lines[i].gmPath.setVisible(false);
+	removed = visibleObjects.lines.splice(i, 1);
+}
+
+//for(var i = 0; i < 4; i++) {
+//	console.log("i"+i);
+//	console.log("voffffff-xpath: "+JSON.stringify(visibleObjects.lines[i].gmPath));
+//	var ypath=Object.create(visibleObjects.lines[i].gmPath);
+//	console.log("del-path: ");
+//	ypath.setMap([]);
+
+  };
+};
+
+
+function queryTelize(VOIndex,inpEntry) {
+//console.log(JSON.stringify(evtXHR));
+console.log("lookup:"+VOIndex+"/"+inpEntry+"/"+tn);
+tn=telize.push(new XMLHttpRequest());
+//console.log(inpEntry+"/"+tn);
+tm=tn-1;
+telize[tm].open("GET", "http://www.telize.com/geoip/"+inpEntry,true)
+telize[tm].onreadystatechange = queryTelizeHandler(VOIndex,tm);
+telize[tm].send();
+}
+
+
+var queryTelizeHandler=function(VOIndexh,tmh) {
+return function() {
+//console.log("queryTelizeHandler:"+VOIndexh+"/"+tmh+"/"+telize[tmh].readyState+"/"+telize[tmh].status);
+	if (telize[tmh].readyState === 4) {
+                if (telize[tmh].status === 200) {
+			var response = telize[tmh].responseText;
+			var myTelizeObject = JSON.parse(telize[tmh].responseText);
+console.log(myTelizeObject.country);
+			if (typeof(visibleObjects.lines[VOIndexh].loc) == "undefined") {visibleObjects.lines[VOIndexh].loc=[];};
+			if (typeof(myTelizeObject.latitude) != "undefined"&&typeof(myTelizeObject.longitude)!= "undefined") {
+					entry=(visibleObjects.lines[VOIndexh].loc).push(new google.maps.LatLng(myTelizeObject.latitude, myTelizeObject.longitude));
+			};
+			if (visibleObjects.lines[VOIndexh].loc.length==2) {creategmPath(VOIndexh);};
+//console.log("queryTelizeHandler:"+JSON.stringify(visibleObjects.lines[VOIndexh]));
+		} else { console.log("queryTelizeHandler client Errors Occured " + telize[tmh].readyState + " and the status is " + telize[tmh].status);}
+	} else {dump("queryTelizeHandler currently the application is at" + telize[tmh].readyState);}
+}
+};
+
+
+function creategmPath(VOIndexp) {
+//run if there are 2 waypoints
+
+//console.log("WWWW:"+VOIndexp+"/"+JSON.stringify(visibleObjects.lines[VOIndexp]));
+if (visibleObjects.lines[VOIndexp].loc.length==2) {
+maptype="PROT";
+maptype="FDIR";
+switch (maptype) {
+	case 'FDIR': switch(visibleObjects.lines[VOIndexp].direction) {
+		case 'L2R':col='#00FF00';break;
+		case 'R2L':col='#FF0000';break;
+		default: col='#FFFF80';break;
+	};
+	break;
+	case 'PROT': switch(visibleObjects.lines[VOIndexp].protocolname_protocolid) {
+		case 'TCP':col='#00FF00';break;
+		case 'UDP':col='#FF0000';break;
+		case 'ICMP':col='#FFFF00';break;
+		case 'IGMP':col='#FFFF00';break;
+		default: col='#FF00FF';break;
+	};
+	break;
+	default: col='#FF00FF';break;
+};
+//console.log("creategmPathA:"+JSON.stringify(visibleObjects.lines[VOIndexp].loc));
+    var linepath = new google.maps.Polyline(
+    {   path: visibleObjects.lines[VOIndexp].loc,
+        strokeColor: col,
+        strokeOpacity: 1,
+        strokeWeight: 1,
+        geodesic: true
+    });
+
+if (typeof(visibleObjects.lines[VOIndexp].gmPath) == "undefined") {visibleObjects.lines[VOIndexp].gmPath={};};
+//console.log("creategmPathB:"+JSON.stringify(linepath));
+	visibleObjects.lines[VOIndexp].gmPath=linepath;
+//	console.log("creategmPathAfter:"+JSON.stringify(linepath));
+	};
+};
+
+
+
+function startmainTimer() {
+mainTimerA=setInterval( "queryQRadar()", 30000 );
+mainTimerB=setInterval( "drawPath()", 10000 );
+//alert(IDQRadarTimer);
+};
+
+
+function startQRadarTimer() {
+IDQRadarTimer=setInterval( "queryQRadarWait4Completion()", 10000 );
+//alert(IDQRadarTimer);
+};
+
+function stopQRadarTimer() {
+clearInterval(IDQRadarTimer);
+IDQRadarTimer=null;
+//alert(IDQRadarTimer);
+};
+
+
+function queryQRadar() {
+//console.log("queryQRadar()");
+  result=[];
+//select sourceip,destinationip,eventdirection as 'direction',PROTOCOLNAME(protocolid),sum(eventcount) as 'count' from events where qid=2750010 group by sourceip,destinationip,direction,protocolid having sum(eventcount) >49 order by 'COUNT' last 6 HOURS
+//  qraQuery="https://172.16.60.150/api/ariel/searches?query_expression=select+sourceip%2Cdestinationip%2Ceventdirection%2CPROTOCOLNAME(protocolid)%2Csum(eventcount)+as+'count'+from+events+where+qid%3D2750010+group+by+sourceip%2Cdestinationip%2Ceventdirection%2Cprotocolid+having+sum(eventcount)+%3E49+last+6+HOURS";
+
+
+
+//select sourceip,destinationip,flowdirection,PROTOCOLNAME(protocolid),count(*) from flows where flowdirection='L2R' or flowdirection='R2L' group by sourceip,destinationip,flowdirection,PROTOCOLNAME(protocolid) HAVING count(*)>1 order by count(*) limit 50
+
+//  qraQuery="https://172.16.60.150/api/ariel/searches?query_expression=select+sourceip%2Cdestinationip%2Cflowdirection%2CPROTOCOLNAME(protocolid)%2Ccount(*)+from+flows+where+flowdirection%3D'L2R'+or+flowdirection%3D'R2L'+group+by+sourceip%2Cdestinationip%2CPROTOCOLNAME(protocolid)%2Cflowdirection+HAVING+count(*)>1+order+by+count(*)+LAST+1+MINUTES";
+
+
+// /select sourceip,destinationip,eventdirection as 'direction',PROTOCOLNAME(protocolid) as 'protocol',sum(eventcount) as 'count' from events where (direction='L2R' or direction='R2L') and RULENAME(creeventlist)=RULENAME(1217) group by sourceip,destinationip,direction,protocol having sum(eventcount) >100 order by 'COUNT' last 48 HOURS 
+
+
+qraQuery="https://192.168.1.15/api/ariel/searches?query_expression=select+sourceip%2Cdestinationip%2Ceventdirection+as+'direction'%2CPROTOCOLNAME(protocolid)+as+'protocol'%2Csum(eventcount)+as+'count'+from+events+where+(direction%3D'L2R'+or+direction%3D'R2L')+and+RULENAME(creeventlist)%3DRULENAME(1217)+group+by+sourceip%2Cdestinationip%2Cdirection%2Cprotocol+having+sum(eventcount)+%3E100+order+by+'COUNT'+last+48+HOURS+%0D%0A?search_id=1234";
+
+
+console.log("queryQRadar()");
+//alert(qradar.status);
+//if (IDQRadarTimer == null) {
+qradar.open("POST", qraQuery)
+qradar.onreadystatechange = queryQRadarHandler;
+//  var encodedString = btoa(uid);
+//  var encodedString = btoa(auth_token);
+
+//  qradar.withCredentials = "true";
+  qradar.onreadystatechange = queryQRadarHandler;
+//  qradar.setRequestHeader("Authorization","Basic "+encodedString);
+  qradar.setRequestHeader("Accept","application/json");
+  qradar.setRequestHeader("Version","3.0");
+  qradar.setRequestHeader("Access-Control-Allow-Origin","true");
+  qradar.setRequestHeader("SEC",auth_token);
+  qradar.send();
+//}
+};
+
+
+function queryQRadarHandler(evtXHR) {
+console.log("1st response:"+qradar.readyState+"/"+qradar.status);
+     if (qradar.readyState == 4) {
+                if (qradar.status == 201) {
+console.log("4/201");
+
+qraWaitforQueryresult="https://192.168.1.15/api/ariel/searches/1234"
+qradarwait.open("GET", qraWaitforQueryresult)
+qradarwait.onreadystatechange = queryQRadarWait4Completion;
+  qradarwait.setRequestHeader("Accept","application/json");
+  qradarwait.setRequestHeader("Version","2.0");
+  qradarwait.setRequestHeader("Access-Control-Allow-Origin","true");
+  qradarwait.setRequestHeader("SEC",auth_token);
+  qradarwait.send();
+
+			queryQRadarWait4Completion();
+/*
+                  var response = qradar.responseText;
+		  var myObject = JSON.parse(qradar.responseText);
+		  console.log("Y:"+myObject.status+" "+myObject.search_id);
+		  if (myObject.status!='COMPLETED') {
+		    if (IDQRadarTimer==null) {startQRadarTimer();}
+		  } else {
+		    stopQRadarTimer();
+		    if (myObject.status=='COMPLETED') {
+		    stopQRadarTimer();
+		    queryQRadarGetresults(myObject.search_id);
+		  }
+		  }*/
+                }
+                else {
+                    console.log("queryQRadarHandler client Errors Occured " + qradar.readyState + " and the status is " + qradar.status);
+                }
+        }
+        else
+        {
+            dump("queryQRadarHandler currently the application is at" + qradar.readyState);
+        }
+}
+
+
+function queryQRadarWait4Completion() {
+
+
+console.log("queryQRadarWait4Completion A: "+qradarwait.readyState+"/"+qradarwait.status);
+//alert(qradar.status);
+//if (IDQRadarTimer == null) {
+
+
+console.log("queryQRadarWait4Completion B: "+qradarwait.readyState+"/"+qradarwait.status);
+
+     if (qradarwait.readyState == 4) {
+                if (qradarwait.status == 200) {
+                  var response = qradarwait.responseText;
+		  var myObjectX = JSON.parse(qradarwait.responseText);
+			console.log("queryQRadarWait4Completion C: "+myObjectX.record_count);
+			queryQRadarGetresults(1234);
+
+                }
+                else {
+                    console.log("queryQRadarWait4Completion client Errors Occured " + qradarwait.readyState + " and the status is " + qradarwait.status);
+                }
+        }
+        else
+        {
+            dump("queryQRadarWait4Completion currently the application is at" + qradarwait.readyState);
+        }
+}
+
+function queryQRadarGetresults(search_id) {
+  result=[];
+  qraResultQuery="https://192.168.1.15/api/ariel/searches/1234/results";
+console.log("queryQRadarGetresults():");
+qradarresult.open("GET", qraResultQuery)
+qradarresult.onreadystatechange = queryQRadarGetresultsHandler;
+//  var encodedString = btoa(uid);
+//  qradarresult.withCredentials = "true";
+//  qradarresult.setRequestHeader("Authorization","Basic "+encodedString);
+  qradarresult.setRequestHeader("SEC",auth_token);
+  qradarresult.setRequestHeader("Accept","application/json");
+  qradarresult.setRequestHeader("Version","3.0");
+  qradarresult.setRequestHeader("Access-Control-Allow-Origin","true");
+  qradarresult.send();
+console.log("queryQRadarGetresults(): END");
+};
+
+
+function queryQRadarGetresultsHandler(evtXHRA) {
+ console.log("queryQRadarGetresultsHandler:"+qradarresult.readyState+"/"+qradarresult.status+"/"+qradarresult.record_count);
+     if (qradarresult.readyState == 4) {
+                if (qradarresult.status == 200) {
+                  var response = qradarresult.responseText;
+//			console.log("N:"+qradarresult.readyState+"/"+qradarresult.status+"/"+qradarresult.responseText)
+		  var myObject = JSON.parse(qradarresult.responseText);
+	  console.log("QRadarQuery result count:"+myObject.events.length);
+//	console.log("U:"+JSON.stringify(visibleObjects.lines,memberfilterB));
+
+var visibleObjectsString=JSON.stringify(visibleObjects.lines,memberfilterB);
+var addcount=0;
+for (i=0;i<myObject.events.length;i++) {
+//for (i=0;i<20;i++) {
+	hashValue=(JSON.stringify(myObject.events[i],memberfilterA).hashCode());
+	hashP=':'+hashValue;
+	if (visibleObjectsString.indexOf(hashP)==-1) {
+		entry=((visibleObjects.lines).push(myObject.events[i]));
+		visibleObjects.lines[entry-1].hv=hashValue;
+		visibleObjects.lines[entry-1].ttl=(new Date).getTime();
+//		console.log("ADD: "+myObject.flows[i].sourceip+"/"+myObject.flows[i].destinationip);
+		if(myObject.events[i].sourceip.substr(0,2)!='10') {queryTelize(entry-1,myObject.events[i].sourceip);} else {
+			if (typeof(visibleObjects.lines[entry-1].loc) == "undefined") {visibleObjects.lines[entry-1].loc=[];};
+			visibleObjects.lines[entry-1].loc.push(new google.maps.LatLng(home.latitude, home.longitude));
+			if (visibleObjects.lines[entry-1].loc.length==2) {creategmPath(entry-1);};
+		};
+		if(myObject.events[i].destinationip.substr(0,2)!='10') {queryTelize(entry-1,myObject.events[i].destinationip);} else {
+			if (typeof(visibleObjects.lines[entry-1].loc) == "undefined") {visibleObjects.lines[entry-1].loc=[];};
+			visibleObjects.lines[entry-1].loc.push(new google.maps.LatLng(home.latitude, home.longitude));
+			if (visibleObjects.lines[entry-1].loc.length==2) {creategmPath(entry-1);};
+		};
+
+		addcount++;
+		} else {
+			for(var j = 0; j < visibleObjects.lines.length; j++) {
+			//for(var i = 0; i < 4; i++) {
+				if (hashValue==visibleObjects.lines[j].hv) {
+//					console.log("TTL update "+j);
+					visibleObjects.lines[j].ttl=(new Date).getTime();
+				}
+			};
+		}
+	}
+	console.log("AddCount: "+addcount);
+	enrichQRadarResult(myObject);
+                }
+                else {
+                    console.log("queryQRadarGetresultsHandler client Errors Occured " + qradar.readyState + " and the status is " + qradar.status);
+                }
+        }
+        else
+        {
+            dump("queryQRadarGetresultsHandler currently the application is at" + qradar.readyState);
+        }
+} 
+
+function enrichQRadarResult(qradarresultJSON) {
+console.log("enrichQRadarResult : "+visibleObjects.lines.length);
+//drawPath();
+};
+
+
+String.prototype.hashCode = function(){
+    if (Array.prototype.reduce){
+        return this.split("").reduce(function(a,b){a=((a<<5)-a)+b.charCodeAt(0);return a&a},0);              
+    } 
+    var hash = 0;
+    if (this.length === 0) return hash;
+    for (var i = 0; i < this.length; i++) {
+        var character  = this.charCodeAt(i);
+        hash  = ((hash<<5)-hash)+character;
+        hash = hash & hash; // Convert to 32bit integer
+    }
+    return hash;
+}
+
+
+
+</script>
+   </head>
+    <body onload="init()">
+        <div id="map"></div>
+	<input type="button" name="theButton1" id="theButton" value="Start" onClick="startmainTimer();">
+    </body>
+</html>
